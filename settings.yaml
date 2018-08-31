@@ -1,0 +1,32 @@
+RedisMonitoringService:
+    Db:
+        LogsConnString:
+            settings-key: LogsConnString
+            types:
+                - AzureTableStorage
+        DataConnString:
+            settings-key: RedisMonitoringService-DataConnString
+            types:
+                - AzureTableStorage
+    RedisConnStrings:
+            settings-key: RedisMonitoringService-RedisConnStrings
+            types:
+                - Json
+    OwnRedisCacheConnString:
+            settings-key: RedisMonitoringService-OwnRedisCacheConnString
+            types:
+                - Redis
+    CheckFrequency: 00:05:00
+    HistoryDuration: 01:00:00
+SlackNotifications:
+    AzureQueue:
+        ConnectionString:
+            settings-key: SlackNotificationsConnString
+            types:
+                - AzureTableStorage
+        QueueName:
+            settings-key: SlackQueueName
+MonitoringServiceClient:
+    MonitoringServiceUrl:
+        settings-key: MonitoringServiceUrl
+
