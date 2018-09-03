@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Common;
+using Common.Log;
+using Lykke.Common.Log;
 using Lykke.Service.RedisMonitoring.Client.Models;
 using Lykke.Service.RedisMonitoring.Core.Repositories;
 using Lykke.Service.RedisMonitoring.Core.Services;
@@ -18,17 +20,20 @@ namespace Lykke.Service.RedisMonitoring.Services
 
         private readonly IRedisHealthRepository _redisHealthRepository;
         private readonly IDatabase _db;
+        private readonly ILog _log;
         private readonly TimeSpan _historyDuration;
         private readonly IEnumerable<string> _redises;
 
         public CachedRedisHealthRepository(
             IRedisHealthRepository redisHealthRepository,
             IConnectionMultiplexer connectionMultiplexer,
+            ILogFactory logFactory,
             TimeSpan historyDuration,
             IEnumerable<string> redises)
         {
             _redisHealthRepository = redisHealthRepository;
             _db = connectionMultiplexer.GetDatabase();
+            _log = logFactory.CreateLog(this);
             _historyDuration = historyDuration;
             _redises = redises;
         }
@@ -89,23 +94,39 @@ namespace Lykke.Service.RedisMonitoring.Services
             };
             var setTask = tx.StringSetAsync(key, item.ToJson(), _historyDuration);
             tasks.Add(setTask);
-            if (!await tx.ExecuteAsync())
-                throw new InvalidOperationException($"Error during adding ping info for redis {redisName}");
-
-            await Task.WhenAll(tasks);
-            if (!setTask.Result)
-                throw new InvalidOperationException($"Error during adding ping info for redis {redisName}");
+            if (await tx.ExecuteAsync())
+            {
+                await Task.WhenAll(tasks);
+                if (!setTask.Result)
+                    _log.Error($"Error during adding ping info for redis {redisName}");
+            }
+            else
+            {
+                _log.Error($"Error during adding ping info for redis {redisName}");
+            }
 
             var keys = await GetInstanceKeysAsync(redisName);
-            var infoJsons = await _db.StringGetAsync(keys);
-            var redisHealth = new RedisHealth
+            RedisHealth redisHealth;
+            if (keys.Length == 0)
             {
-                Name = redisName,
-                HealthChecks = infoJsons
-                    .Where(a => a.HasValue)
-                    .Select(a => a.ToString().DeserializeJson<PingInfo>())
-                    .ToList(),
-            };
+                redisHealth = await _redisHealthRepository.GetAsync(redisName);
+                var historyStart = DateTime.UtcNow.Subtract(_historyDuration);
+                redisHealth.HealthChecks = redisHealth.HealthChecks.Where(c => c.Timestamp >= historyStart).ToList();
+            }
+            else
+            {
+                var infoJsons = await _db.StringGetAsync(keys);
+                redisHealth = new RedisHealth
+                {
+                    Name = redisName,
+                    HealthChecks = infoJsons
+                        .Where(a => a.HasValue)
+                        .Select(a => a.ToString().DeserializeJson<PingInfo>())
+                        .ToList(),
+                };
+            }
+            if (redisHealth.HealthChecks.All(i => i.Timestamp != pingInfo.Timestamp))
+                redisHealth.HealthChecks.Add(pingInfo);
             await _redisHealthRepository.SaveAsync(redisHealth);
         }
 

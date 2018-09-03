@@ -21,6 +21,16 @@ namespace Lykke.Service.RedisMonitoring.AzureRepositories
             await _storage.InsertOrReplaceAsync(RedisHealthEntity.FromModel(redisHealth));
         }
 
+        public async Task<RedisHealth> GetAsync(string redisName)
+        {
+            var redisHealthEntity = await _storage.GetDataAsync(RedisHealthEntity.GeneratePartitionKey(),RedisHealthEntity.GenerateRowKey(redisName));
+            return new RedisHealth
+            {
+                Name = redisName,
+                HealthChecks = redisHealthEntity.HealthData.DeserializeJson<List<PingInfo>>(),
+            };
+        }
+
         public async Task<List<RedisHealth>> GetAllAsync()
         {
             var items = await _storage.GetDataAsync(RedisHealthEntity.GeneratePartitionKey());

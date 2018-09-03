@@ -7,7 +7,7 @@ namespace Lykke.Service.RedisMonitoring.Core.Repositories
     public interface IRedisHealthRepository
     {
         Task SaveAsync(RedisHealth redisHealth);
-
+        Task<RedisHealth> GetAsync(string redisName);
         Task<List<RedisHealth>> GetAllAsync();
     }
 }
