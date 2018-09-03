@@ -41,7 +41,8 @@ namespace Lykke.Service.RedisMonitoring.Modules
             builder.RegisterType<CachedRedisHealthRepository>()
                 .As<ICachedRedisHealthRepository>()
                 .SingleInstance()
-                .WithParameter(TypedParameter.From(settings.RedisMonitoringService.HistoryDuration));
+                .WithParameter(TypedParameter.From(settings.RedisMonitoringService.HistoryDuration))
+                .WithParameter(TypedParameter.From(settings.RedisMonitoringService.RedisConnStrings.Keys));
 
             builder.Register(context => ConnectionMultiplexer.Connect(settings.RedisMonitoringService.OwnRedisCacheConnString))
                 .As<IConnectionMultiplexer>()
