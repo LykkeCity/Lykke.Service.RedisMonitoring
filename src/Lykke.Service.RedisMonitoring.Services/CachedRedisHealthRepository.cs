@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using Common;
@@ -14,9 +15,10 @@ namespace Lykke.Service.RedisMonitoring.Services
 {
     public class CachedRedisHealthRepository : ICachedRedisHealthRepository
     {
-        private const string _dataFormat = "yyyy-MM-dd-HH-mm-ss-fffffff";
+        private const string _dateFormat = "yyyy-MM-dd-HH-mm-ss-fffffff";
         private const string _instanceSetKeyPattern = "RedisMonitoring:{0}";
         private const string _objKeySuffix = "time:{0}";
+        private const string _instanceLastAliveTimeKeyPattern = "RedisMonitoring:LastAliveTime:{0}";
 
         private readonly IRedisHealthRepository _redisHealthRepository;
         private readonly IDatabase _db;
@@ -59,7 +61,7 @@ namespace Lykke.Service.RedisMonitoring.Services
                         PingInfo = pingInfo,
                     };
                     var instanceKey = string.Format(_instanceSetKeyPattern, redisHealth.Name);
-                    var objSuffix = string.Format(_objKeySuffix, pingInfo.Timestamp.ToString(_dataFormat));
+                    var objSuffix = string.Format(_objKeySuffix, pingInfo.Timestamp.ToString(_dateFormat));
                     var objKey = $"{instanceKey}:{objSuffix}";
 
                     var tx = _db.CreateTransaction();
@@ -73,13 +75,19 @@ namespace Lykke.Service.RedisMonitoring.Services
                     if (await tx.ExecuteAsync())
                         await Task.WhenAll(tasks);
                 }
+
+                if (redisHealth.LastResponseTime.HasValue)
+                {
+                    var lastAliveKey = string.Format(_instanceLastAliveTimeKeyPattern, redisHealth.Name);
+                    await _db.StringSetAsync(lastAliveKey, redisHealth.LastResponseTime.Value.ToString(_dateFormat));
+                }
             }
         }
 
         public async Task SaveAsync(PingInfo pingInfo, string redisName)
         {
             var instanceKey = string.Format(_instanceSetKeyPattern, redisName);
-            var objSuffix = string.Format(_objKeySuffix, pingInfo.Timestamp.ToString(_dataFormat));
+            var objSuffix = string.Format(_objKeySuffix, pingInfo.Timestamp.ToString(_dateFormat));
             var item = new CacheRedisHealthModel
             {
                 Name = redisName,
@@ -94,6 +102,11 @@ namespace Lykke.Service.RedisMonitoring.Services
             };
             var setTask = tx.StringSetAsync(key, item.ToJson(), _historyDuration);
             tasks.Add(setTask);
+            if (pingInfo.Duration.HasValue)
+            {
+                var lastAliveKey = string.Format(_instanceLastAliveTimeKeyPattern, redisName);
+                tasks.Add(tx.StringSetAsync(lastAliveKey, pingInfo.Timestamp.ToString(_dateFormat)));
+            }
             if (await tx.ExecuteAsync())
             {
                 await Task.WhenAll(tasks);
@@ -124,38 +137,76 @@ namespace Lykke.Service.RedisMonitoring.Services
                         .Select(a => a.ToString().DeserializeJson<PingInfo>())
                         .ToList(),
                 };
+                if (pingInfo.Duration.HasValue)
+                {
+                    redisHealth.LastResponseTime = pingInfo.Timestamp;
+                }
+                else
+                {
+                    var lastAliveKey = string.Format(_instanceLastAliveTimeKeyPattern, redisName);
+                    var lastAliveStr = await _db.StringGetAsync(lastAliveKey);
+                    if (lastAliveStr.HasValue)
+                        redisHealth.LastResponseTime = DateTime.ParseExact(lastAliveStr, _dateFormat, CultureInfo.InvariantCulture);
+                }
             }
             if (redisHealth.HealthChecks.All(i => i.Timestamp != pingInfo.Timestamp))
                 redisHealth.HealthChecks.Add(pingInfo);
             await _redisHealthRepository.SaveAsync(redisHealth);
         }
 
-        public async Task<List<RedisHealth>> GetAll()
+        public async Task<List<RedisHealth>> GetAllAsync()
         {
             var result = new List<RedisHealth>();
 
-            foreach (string redis in _redises)
+            foreach (string redisName in _redises)
             {
-                var keys = await GetInstanceKeysAsync(redis);
+                var keys = await GetInstanceKeysAsync(redisName);
                 if (keys.Length == 0)
                     continue;
 
-                var redisesHealthJsons = await _db.StringGetAsync(keys);
-                result.AddRange(
-                    redisesHealthJsons
-                        .Where(r => r.HasValue)
-                        .Select(i => i.ToString().DeserializeJson<CacheRedisHealthModel>())
-                        .GroupBy(i => i.Name)
-                        .Select(g => new RedisHealth
-                        {
-                            Name = g.Key,
-                            HealthChecks = g.Select(x => x.PingInfo).ToList(),
-                        }));
+                var redisHealthJsons = await _db.StringGetAsync(keys);
+                var healthChecks = redisHealthJsons
+                    .Where(r => r.HasValue)
+                    .Select(i => i.ToString().DeserializeJson<CacheRedisHealthModel>().PingInfo)
+                    .ToList();
+                var redisHealth = new RedisHealth
+                {
+                    Name = redisName,
+                    HealthChecks = healthChecks,
+                };
+                var lastAliveKey = string.Format(_instanceLastAliveTimeKeyPattern, redisName);
+                var lastAliveStr = await _db.StringGetAsync(lastAliveKey);
+                if (lastAliveStr.HasValue)
+                    redisHealth.LastResponseTime = DateTime.ParseExact(lastAliveStr, _dateFormat, CultureInfo.InvariantCulture);
+                result.Add(redisHealth);
             }
 
             if (result.Count == 0)
                 return await GetHealthChecksFromTableAsync();
 
+            return result;
+        }
+
+        public async Task<RedisHealth> GetAsync(string redisName)
+        {
+            var keys = await GetInstanceKeysAsync(redisName);
+            if (keys.Length == 0)
+                return await _redisHealthRepository.GetAsync(redisName);
+
+            var infoJsons = await _db.StringGetAsync(keys);
+            var healthChecks = infoJsons
+                .Where(a => a.HasValue)
+                .Select(a => a.ToString().DeserializeJson<PingInfo>())
+                .ToList();
+            var result = new RedisHealth
+            {
+                Name = redisName,
+                HealthChecks = healthChecks,
+            };
+            var lastAliveKey = string.Format(_instanceLastAliveTimeKeyPattern, redisName);
+            var lastAliveStr = await _db.StringGetAsync(lastAliveKey);
+            if (lastAliveStr.HasValue)
+                result.LastResponseTime = DateTime.ParseExact(lastAliveStr, _dateFormat, CultureInfo.InvariantCulture);
             return result;
         }
 
@@ -190,6 +241,7 @@ namespace Lykke.Service.RedisMonitoring.Services
                 {
                     Name = i.Name,
                     HealthChecks = i.HealthChecks.Where(c => c.Timestamp >= historyStart).ToList(),
+                    LastResponseTime = i.LastResponseTime,
                 })
                 .ToList();
         }

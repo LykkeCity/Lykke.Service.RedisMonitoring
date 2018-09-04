@@ -18,5 +18,13 @@ namespace Lykke.Service.RedisMonitoring.Client
         /// <returns>List of redis instance health checks.</returns>
         [Get("/api/redismonitoring/Health")]
         Task<List<RedisHealth>> GetHealth();
+
+        /// <summary>
+        /// Fetches health checks for monitored redis instances during configured period.
+        /// </summary>
+        /// <param name="redisName">Redis instance name.</param>
+        /// <returns>Redis instance health status.</returns>
+        [Get("/api/redismonitoring/Health/{redisName}")]
+        Task<RedisHealth> GetHealth(string redisName);
     }
 }

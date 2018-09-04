@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Lykke.Service.RedisMonitoring.Client;
 using Lykke.Service.RedisMonitoring.Client.Models;
@@ -22,7 +23,18 @@ namespace Lykke.Service.RedisMonitoring.Controllers
         [SwaggerOperation("Health")]
         public async Task<List<RedisHealth>> GetHealth()
         {
-            return await _redisHealthRepository.GetAll();
+            return await _redisHealthRepository.GetAllAsync();
+        }
+
+        [Route("api/redismonitoring/Health/{redisName}")]
+        [HttpGet]
+        [SwaggerOperation("Health")]
+        public async Task<RedisHealth> GetHealth([FromRoute] string redisName)
+        {
+            if (string.IsNullOrWhiteSpace(redisName))
+                throw new ArgumentNullException();
+
+            return await _redisHealthRepository.GetAsync(redisName);
         }
     }
 }

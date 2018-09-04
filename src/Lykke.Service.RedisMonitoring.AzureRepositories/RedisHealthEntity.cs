@@ -1,4 +1,5 @@
-﻿using Common;
+﻿using System;
+using Common;
 using Lykke.Service.RedisMonitoring.Client.Models;
 using Microsoft.WindowsAzure.Storage.Table;
 
@@ -8,6 +9,7 @@ namespace Lykke.Service.RedisMonitoring.AzureRepositories
     {
         public string Name { get; set; }
         public string HealthData { get; set; }
+        public DateTime? LastResponseTime { get; set; }
 
         internal static string GeneratePartitionKey()
         {
@@ -27,6 +29,7 @@ namespace Lykke.Service.RedisMonitoring.AzureRepositories
                 RowKey = GenerateRowKey(redisHealth.Name),
                 Name = redisHealth.Name,
                 HealthData = redisHealth.HealthChecks.ToJson(),
+                LastResponseTime = redisHealth.LastResponseTime,
             };
         }
     }
